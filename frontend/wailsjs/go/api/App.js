@@ -26,6 +26,10 @@ export function GetConfig() {
   return window['go']['api']['App']['GetConfig']();
 }
 
+export function GetCtx() {
+  return window['go']['api']['App']['GetCtx']();
+}
+
 export function GetLLamaStatus() {
   return window['go']['api']['App']['GetLLamaStatus']();
 }
@@ -92,6 +96,10 @@ export function SelectGGUFFile(arg1) {
 
 export function SetActiveModel(arg1) {
   return window['go']['api']['App']['SetActiveModel'](arg1);
+}
+
+export function SetTrayIcon(arg1) {
+  return window['go']['api']['App']['SetTrayIcon'](arg1);
 }
 
 export function SetVLModel(arg1, arg2, arg3) {

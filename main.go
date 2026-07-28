@@ -16,15 +16,16 @@ import (
 	"vecura/internal/vector"
 
 	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed build/appicon.ico
+var trayIcon []byte
 
 // defaultWindowWidth/defaultWindowHeight are the initial window size used
 // when no previous size was persisted to disk.
@@ -62,6 +63,7 @@ func main() {
 	llamaSrv := llama.NewServer(llamaRM)
 
 	app := api.NewApp(d, pipeline, store, registry, thumbDir, llamaRM, llamaSrv)
+	app.SetTrayIcon(trayIcon)
 
 	// Load a local .env file (if present) so OPENROUTER_API_KEY and
 	// friends are visible via os.Getenv. System env vars always win.
@@ -69,34 +71,23 @@ func main() {
 	loadEnvFile(".env")
 	loadEnvFile(filepath.Join(appDir, ".env"))
 
-	// System tray: closing the window hides it (and removes it from the
-	// taskbar) instead of quitting. The tray icon stays and can re-open it.
-	trayMenu := menu.NewMenu()
-	trayMenu.AddText("Show Vecura", nil, func(_ *menu.CallbackData) {
-		runtime.WindowShow(app.GetCtx())
-	})
-	trayMenu.AddSeparator()
-	trayMenu.AddText("Quit", nil, func(_ *menu.CallbackData) {
-		runtime.Quit(app.GetCtx())
-	})
-
 	err = wails.Run(&options.App{
-		Title:             "Vecura",
-		Width:             defaultWindowWidth,
-		Height:            defaultWindowHeight,
-		MinWidth:          api.MinWindowWidth,
-		MinHeight:         api.MinWindowHeight,
-		Frameless:         true,
-		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
-		TrayMenu:          trayMenu,
+		Title:            "Vecura",
+		Width:            defaultWindowWidth,
+		Height:           defaultWindowHeight,
+		MinWidth:         api.MinWindowWidth,
+		MinHeight:        api.MinWindowHeight,
+		Frameless:        true,
+		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		// Closing the window hides it (and removes it from the taskbar)
+		// instead of quitting. A custom system tray (see below) re-opens it.
 		HideWindowOnClose: true,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: localThumbnailHandler(thumbDir),
 		},
 		Windows: &windows.Options{
-			// Acrylic backdrop gives the vibrant, blurred material that
-			// shows through the transparent webview (Win11 22621+).
+			// Acrylic backdrop gives the vibrant, blurred material.
 			BackdropType:                      windows.Acrylic,
 			WebviewIsTransparent:              true,
 			WindowIsTranslucent:               true,

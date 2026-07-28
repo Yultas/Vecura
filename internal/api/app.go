@@ -19,6 +19,7 @@ import (
 	"vecura/internal/llama"
 	"vecura/internal/models"
 	"vecura/internal/scan"
+	"vecura/internal/tray"
 	"vecura/internal/vector"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -94,6 +95,9 @@ type App struct {
 	progMu sync.Mutex
 	cfgMu  sync.Mutex
 	vlMu   sync.Mutex // serialises SetVLModel / StopLLamaServer
+
+	tray         *tray.Tray // system tray handle (nil on non-Windows)
+	trayIconData []byte     // embedded .ico bytes for the tray icon
 }
 
 // NewApp constructs the Wails App.
@@ -303,6 +307,35 @@ func (a *App) Startup(ctx context.Context) {
 		a.vlModelDim = cfg.VLModelDim
 		a.registerVLEmbedder()
 	}
+
+	// Start the system tray (Windows). It lets the user re-open the window
+	// after closing it (HideWindowOnClose keeps the process alive in the
+	// background). The tray icon is removed on Shutdown.
+	a.startTray()
+}
+
+// findTrayIcon returns the embedded .ico bytes, set via SetTrayIcon.
+func (a *App) findTrayIcon() []byte {
+	return a.trayIconData
+}
+
+// SetTrayIcon provides the embedded tray icon (.ico bytes) from main.
+func (a *App) SetTrayIcon(data []byte) { a.trayIconData = data }
+
+// startTray launches the Windows system tray icon. It is a no-op on
+// non-Windows platforms (the tray package is build-tagged). The tray shows
+// a "Show Vecura" / "Quit" menu and removes itself on app shutdown.
+func (a *App) startTray() {
+	t := tray.New(a.findTrayIcon(), a.ctx)
+	t.AddItem("Show Vecura", func() { runtime.WindowShow(a.ctx) })
+	t.AddItem("Quit", func() { runtime.Quit(a.ctx) })
+	t.SetActive()
+	go func() {
+		if err := t.Run(); err != nil {
+			BlogWarnf("[tray] run failed: %v", err)
+		}
+	}()
+	a.tray = t
 }
 
 // Shutdown is called by Wails on app close. It stops the llama-server.
@@ -310,6 +343,9 @@ func (a *App) Shutdown(ctx context.Context) {
 	a.vlMu.Lock()
 	defer a.vlMu.Unlock()
 
+	if a.tray != nil {
+		a.tray.Quit()
+	}
 	if a.llamaServer != nil {
 		_ = a.llamaServer.Stop()
 	}
