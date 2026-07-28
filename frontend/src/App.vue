@@ -17,16 +17,22 @@
 
     <div class="app-body">
       <!-- Floating sidebar card -->
-      <aside class="sidebar">
+      <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+        <div class="sidebar-top">
+          <button class="sidebar-toggle" @click="toggleSidebar" :title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'">
+            <PanelLeftClose v-if="!sidebarCollapsed" :size="18" />
+            <PanelLeftOpen v-else :size="18" />
+          </button>
+        </div>
         <nav class="sidebar-nav">
           <div class="nav-item" :class="{ active: activeRoute === '/settings' }" @click="onMenu('/settings')">
-            <el-icon><SettingsIcon /></el-icon><span>Settings</span>
+            <el-icon><SettingsIcon /></el-icon><span class="nav-label">Settings</span>
           </div>
           <div class="nav-item" :class="{ active: activeRoute === '/help' }" @click="onMenu('/help')">
-            <el-icon><CircleHelp /></el-icon><span>Help</span>
+            <el-icon><CircleHelp /></el-icon><span class="nav-label">Help</span>
           </div>
           <div class="nav-item" :class="{ active: logsOpen }" @click="logsOpen = true">
-            <el-icon><Document /></el-icon><span>Logs</span>
+            <el-icon><ScrollText /></el-icon><span class="nav-label">Logs</span>
           </div>
         </nav>
 
@@ -59,7 +65,7 @@
       <!-- Main content card -->
       <section class="main">
         <div class="main-search">
-          <SearchBar :recent="recent" :active-model="activeModel" @search="onSearch" />
+          <SearchBar :recent="recent" :active-model="activeModel" :has-vl="hasVL" @search="onSearch" @search-image="onSearchImage" />
         </div>
         <div class="main-scroll">
           <ImageGrid :hits="hits" :loading="searching" @open="openPreview" />
@@ -101,7 +107,7 @@ import PreviewModal from './components/PreviewModal.vue'
 import LogsView from './views/LogsView.vue'
 import { call, eventsOn } from './api.js'
 import { pushLog } from './logger.js'
-import { Settings as SettingsIcon, CircleHelp, X, Minus, Square, Moon, Sun } from '@lucide/vue'
+import { Settings as SettingsIcon, CircleHelp, ScrollText, X, Minus, Square, Moon, Sun, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
 import { WindowMinimise, WindowToggleMaximise, Quit } from '../wailsjs/runtime/runtime.js'
 
 const route = useRoute()
@@ -109,13 +115,16 @@ const router = useRouter()
 
 const activeRoute = computed(() => route.path)
 const THEME_STORAGE_KEY = 'vecura:theme'
+const SIDEBAR_STORAGE_KEY = 'vecura:sidebar-collapsed'
 const theme = ref(localStorage.getItem(THEME_STORAGE_KEY) || 'dark')
+const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true')
 const models = ref([])
 const recent = ref([])
 const configFolder = ref('')
 const hits = ref([])
 const searching = ref(false)
 const activeModel = ref('')
+const hasVL = ref(false)
 const previewVisible = ref(false)
 const previewIndex = ref(0)
 
@@ -137,6 +146,10 @@ function applyTheme() {
 function toggleTheme() {
   theme.value = theme.value === 'dark' ? 'light' : 'dark'
   applyTheme()
+}
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarCollapsed.value)
 }
 function onMenu(index) {
   router.push(index)
@@ -192,7 +205,7 @@ async function onScanFolder(path) {
   }
 }
 
-async function onSearch(query) {
+async function onSearch(query, mode) {
   // Keyword search works without an embedding model; a registered model only
   // adds semantic results on top. So we no longer require one up front.
   let provider = ''
@@ -202,7 +215,7 @@ async function onSearch(query) {
   }
   searching.value = true
   try {
-    const res = await call('Search', query, provider, modelId, SEARCH_LIMIT, '')
+    const res = await call('Search', query, provider, modelId, SEARCH_LIMIT, '', mode || 'auto')
     hits.value = res || []
     await loadRecent()
   } catch (e) {
@@ -210,6 +223,24 @@ async function onSearch(query) {
   } finally {
     searching.value = false
   }
+}
+
+async function onSearchImage(file) {
+  // Read the file as base64 data URI and search via VL model.
+  const reader = new FileReader()
+  reader.onload = async () => {
+    const dataURI = reader.result // e.g. "data:image/png;base64,..."
+    searching.value = true
+    try {
+      const res = await call('SearchByImageDataURI', dataURI, SEARCH_LIMIT)
+      hits.value = res || []
+    } catch (e) {
+      ElMessage.error('Image search failed: ' + e)
+    } finally {
+      searching.value = false
+    }
+  }
+  reader.readAsDataURL(file)
 }
 
 function openPreview(idx) {
@@ -233,12 +264,21 @@ onMounted(async () => {
     console.error(e)
   }
   await loadRecent()
+  // Check if VL model is configured and server is running.
+  try {
+    const status = await call('GetLLamaStatus')
+    hasVL.value = status && status.installed && status.serverOK
+  } catch (_) {}
   eventsOn('scan:progress', (p) => {
     if (p.Total > 0) scanPercent.value = Math.round((p.Done / p.Total) * 100)
     scanText.value = `Scanning ${p.Done}/${p.Total}`
     scanActive.value = !p.Finished
     if (p.Finished) pushLog('info', ['Scan progress: finished', p.Done + '/' + p.Total])
     else if (p.Total > 0 && p.Done === p.Total) pushLog('info', ['Scan progress', p.Done + '/' + p.Total])
+  })
+  // Backend log events — forwarded from Go logBlog functions.
+  eventsOn('backend:log', (level, msg) => {
+    pushLog(level, ['[backend]', msg])
   })
 })
 </script>

@@ -6,14 +6,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"vecura/internal/db"
+	"vecura/internal/embedder"
+	"vecura/internal/gpu"
+	"vecura/internal/llama"
 	"vecura/internal/models"
 	"vecura/internal/scan"
 	"vecura/internal/vector"
@@ -80,12 +83,21 @@ type App struct {
 	// activeModel is the currently selected model key, restored on startup.
 	activeModel string
 
+	// llama components for local VL embedding
+	llamaRM     *llama.RuntimeManager
+	llamaServer *llama.Server
+	vlEmbedder  *embedder.LLamaVLEmbedder
+	vlModelPath string // path to VL .gguf model
+	vlProjPath  string // path to mmproj .gguf
+	vlModelDim  int    // embedding dimensionality
+
 	progMu sync.Mutex
 	cfgMu  sync.Mutex
+	vlMu   sync.Mutex // serialises SetVLModel / StopLLamaServer
 }
 
 // NewApp constructs the Wails App.
-func NewApp(d *sql.DB, p *scan.Pipeline, s *vector.VectorStore, reg *models.Registry, thumbDir string) *App {
+func NewApp(d *sql.DB, p *scan.Pipeline, s *vector.VectorStore, reg *models.Registry, thumbDir string, llamaRM *llama.RuntimeManager, llamaServer *llama.Server) *App {
 	return &App{
 		db:              d,
 		pipeline:        p,
@@ -94,6 +106,8 @@ func NewApp(d *sql.DB, p *scan.Pipeline, s *vector.VectorStore, reg *models.Regi
 		history:         db.NewHistoryRepo(d),
 		windowStatePath: filepath.Join(filepath.Dir(thumbDir), "window.json"),
 		configPath:      filepath.Join(filepath.Dir(thumbDir), "config.json"),
+		llamaRM:         llamaRM,
+		llamaServer:     llamaServer,
 	}
 }
 
@@ -123,6 +137,12 @@ type appConfig struct {
 	ActiveModel   string                 `json:"activeModel"`
 	FolderPath    string                 `json:"folderPath"`
 	Models        []modelCfg             `json:"models"`
+
+	// Local VL model settings
+	LLamaBackend string `json:"llamaBackend"` // "cuda-12.4", "cuda-13.3", "vulkan", "cpu"
+	VLModelPath  string `json:"vlModelPath"`
+	VLProjPath   string `json:"vlProjPath"`
+	VLModelDim   int    `json:"vlModelDim"`
 }
 
 // loadConfig reads the persisted settings, returning an empty config when no
@@ -147,16 +167,16 @@ func (a *App) loadConfig() appConfig {
 func (a *App) saveConfig(cfg appConfig) {
 	if dir := filepath.Dir(a.configPath); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			log.Printf("[config] mkdir %s failed: %v", dir, err)
+			BlogWarnf("[config] mkdir %s failed: %v", dir, err)
 		}
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		log.Printf("[config] marshal failed: %v", err)
+		BlogErrf("[config] marshal failed: %v", err)
 		return
 	}
 	if err := os.WriteFile(a.configPath, data, 0o644); err != nil {
-		log.Printf("[config] write %s failed: %v", a.configPath, err)
+		BlogErrf("[config] write %s failed: %v", a.configPath, err)
 	}
 }
 
@@ -241,8 +261,22 @@ func (a *App) SetActiveModel(key string) error {
 
 // Startup stores the Wails runtime context, restores the previous window
 // size, and bridges scan progress to events.
+// GetCtx returns the Wails context, used by system-tray callbacks to
+// show/hide/quit the window after startup.
+func (a *App) GetCtx() context.Context {
+	return a.ctx
+}
+
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
+	InitLogger(ctx)
+	Blogf("Vecura started")
+
+	// Wire backend loggers to emit via Wails events.
+	a.pipeline.Logf = func(f string, args ...interface{}) { Blogf(f, args...) }
+	a.llamaRM.Logf = func(f string, args ...interface{}) { Blogf(f, args...) }
+	a.llamaServer.SetLogFunc(func(f string, args ...interface{}) { Blogf(f, args...) })
+
 	a.restoreWindowSize()
 	// Persist window size on every resize so the next launch matches.
 	runtime.EventsOn(ctx, "resize", func(_ ...interface{}) {
@@ -261,6 +295,43 @@ func (a *App) Startup(ctx context.Context) {
 		a.registerModelFromCfg(m)
 	}
 	a.activeModel = cfg.ActiveModel
+
+	// Restore VL model configuration.
+	if cfg.VLModelPath != "" {
+		a.vlModelPath = cfg.VLModelPath
+		a.vlProjPath = cfg.VLProjPath
+		a.vlModelDim = cfg.VLModelDim
+		a.registerVLEmbedder()
+	}
+}
+
+// Shutdown is called by Wails on app close. It stops the llama-server.
+func (a *App) Shutdown(ctx context.Context) {
+	a.vlMu.Lock()
+	defer a.vlMu.Unlock()
+
+	if a.llamaServer != nil {
+		_ = a.llamaServer.Stop()
+	}
+}
+
+// registerVLEmbedder registers the VL embedder in the model registry
+// if the server is running and the model is configured.
+func (a *App) registerVLEmbedder() {
+	if a.vlModelPath == "" {
+		return
+	}
+	port := 8090
+	if a.llamaServer != nil {
+		port = a.llamaServer.Port()
+	}
+	a.vlEmbedder = embedder.NewLLamaVLEmbedder(
+		fmt.Sprintf("http://127.0.0.1:%d", port),
+		a.vlModelDim,
+	)
+	a.registry.RegisterLocal(a.vlEmbedder)
+	// Also set VL embedder on the pipeline so scan creates VL embeddings.
+	a.pipeline.SetVLEmbedder(a.vlEmbedder)
 }
 
 // windowState is the persisted {width,height} blob.
@@ -304,7 +375,12 @@ func (a *App) saveWindowSize() {
 // rank at the top so queries like "photorealistic" reliably surface images
 // whose prompt contains that word, even if the embedding model is weak or
 // absent.
-func (a *App) Search(query, provider, modelID string, K int, tag string) ([]SearchHit, error) {
+//
+// searchMode controls which embedding spaces are searched:
+//   - "" or "auto": keyword + text embeddings + VL embeddings (if available)
+//   - "text":       keyword + text embeddings only
+//   - "vl":         VL embeddings only (query is interpreted as visual content description)
+func (a *App) Search(query, provider, modelID string, K int, tag string, searchMode string) ([]SearchHit, error) {
 	if K <= 0 {
 		K = defaultSearchLimit
 	}
@@ -313,6 +389,25 @@ func (a *App) Search(query, provider, modelID string, K int, tag string) ([]Sear
 		return []SearchHit{}, nil
 	}
 
+	// @p / @c routing prefixes let the user pick the embedding space for this
+	// query only, overriding the UI searchMode:
+	//   @p  -> search text prompts (text embeddings)
+	//   @c  -> search image content (VL embeddings)
+	// Anything else falls back to the UI searchMode (auto/text/vl).
+	resolvedMode := searchMode
+	switch {
+	case strings.HasPrefix(query, "@p"):
+		resolvedMode = "text"
+		query = strings.TrimSpace(query[2:])
+	case strings.HasPrefix(query, "@c"):
+		resolvedMode = "vl"
+		query = strings.TrimSpace(query[2:])
+	}
+	if query == "" {
+		return []SearchHit{}, nil
+	}
+
+	// id -> best score so far.
 	allowed := map[int32]bool{}
 	if tag != "" {
 		ids, err := a.pipeline.ImageRepo().GetByTag(tag)
@@ -327,40 +422,77 @@ func (a *App) Search(query, provider, modelID string, K int, tag string) ([]Sear
 	// id -> best score so far.
 	best := map[int32]float32{}
 
-	// 1) Keyword / substring match (no model needed).
-	kw, kerr := a.pipeline.ImageRepo().SearchByText(query, K)
-	if kerr != nil {
-		log.Printf("[search] keyword search failed: %v", kerr)
-	}
-	for _, id := range kw {
-		if tag != "" && !allowed[id] {
-			continue
+	// 1) Keyword / substring match (no model needed). Skip in VL-only mode.
+	var kw []int32
+	if resolvedMode != "vl" {
+		var kerr error
+		kw, kerr = a.pipeline.ImageRepo().SearchByText(query, K)
+		if kerr != nil {
+			BlogWarnf("[search] keyword search failed: %v", kerr)
 		}
-		if _, ok := best[id]; !ok {
-			best[id] = 1.0 // keyword matches float to the top
+		for _, id := range kw {
+			if tag != "" && !allowed[id] {
+				continue
+			}
+			if _, ok := best[id]; !ok {
+				best[id] = 1.0 // keyword matches float to the top
+			}
 		}
 	}
 
-	// 2) Semantic search when the model is registered.
-	if e, ok := a.registry.Get(provider + "/" + modelID); ok {
-		Q, qerr := e.Embed([]string{query})
-		if qerr != nil {
-			log.Printf("[search] embed query failed: %v", qerr)
-		} else if len(Q) > 0 {
-			_ = a.history.AddQuery(query)
-			res := a.store.Search(Q[0], provider, modelID, K+len(kw))
-			for _, r := range res {
-				if tag != "" && !allowed[r.ID] {
-					continue
+	// 2) Semantic text search when the model is registered. Skip in VL-only mode.
+	if resolvedMode != "vl" {
+		if e, ok := a.registry.Get(provider + "/" + modelID); ok {
+			Q, qerr := e.Embed([]string{query})
+			if qerr != nil {
+				BlogWarnf("[search] embed query failed: %v", qerr)
+			} else if len(Q) > 0 {
+				_ = a.history.AddQuery(query)
+				res := a.store.Search(Q[0], provider, modelID, K+len(kw))
+				for _, r := range res {
+					if tag != "" && !allowed[r.ID] {
+						continue
+					}
+					if r.Score > best[r.ID] {
+						best[r.ID] = r.Score
+					}
 				}
-				if r.Score > best[r.ID] {
-					best[r.ID] = r.Score
+			}
+		} else if resolvedMode != "vl" {
+			// No text model registered: still record the query for suggestions.
+			_ = a.history.AddQuery(query)
+		}
+	}
+
+	// 3) VL semantic search when the VL model is available.
+	if resolvedMode != "text" && a.vlEmbedder != nil {
+		vlKey := a.vlEmbedder.Key()
+		if e, ok := a.registry.Get(vlKey); ok {
+			Q, qerr := e.Embed([]string{query})
+			if qerr != nil {
+				BlogWarnf("[search] VL embed query failed: %v", qerr)
+			} else if len(Q) > 0 {
+				_ = a.history.AddQuery(query)
+				// Extract provider/modelID from the VL key ("local/vl").
+				vlProvider := "local"
+				vlModelID := "vl"
+				if idx := strings.Index(vlKey, "/"); idx >= 0 {
+					vlProvider = vlKey[:idx]
+					vlModelID = vlKey[idx+1:]
+				}
+				res := a.store.Search(Q[0], vlProvider, vlModelID, K)
+				for _, r := range res {
+					if tag != "" && !allowed[r.ID] {
+						continue
+					}
+					// VL results get a slight boost to distinguish from text-only matches.
+					score := r.Score * 1.01
+					if score > best[r.ID] {
+						best[r.ID] = score
+					}
 				}
 			}
 		}
-	} else {
-		// No model registered: still record the query for suggestions.
-		_ = a.history.AddQuery(query)
 	}
 
 	if len(best) == 0 {
@@ -433,6 +565,7 @@ func (a *App) AddModel(cfg AddModelConfig) (*ModelInfo, error) {
 	cfg.Dim = dim
 	e := newRemoteEmbedder(cfg)
 	lm := a.registry.RegisterRemote(e)
+	Blogf("[model] registered provider=%s model=%s dim=%d", cfg.Provider, cfg.Model, dim)
 	// Persist the registered model and make it the active one.
 	a.cfgMu.Lock()
 	saved := a.loadConfig()
@@ -483,8 +616,14 @@ func (a *App) ListModels() []ModelInfo {
 
 // ScanFolder triggers a background scan of a folder for a given model key.
 func (a *App) ScanFolder(path, modelKey string) error {
+	Blogf("[scan] started folder=%s model=%s", path, modelKey)
 	go func() {
-		_ = a.pipeline.ScanFolder(a.ctx, path, modelKey)
+		err := a.pipeline.ScanFolder(a.ctx, path, modelKey)
+		if err != nil {
+			BlogErrf("[scan] failed: %v", err)
+		} else {
+			Blogf("[scan] finished folder=%s", path)
+		}
 	}()
 	return nil
 }
@@ -543,7 +682,14 @@ func (a *App) RecentSearches() ([]string, error) {
 // CheckProvider validates an API key by calling the provider's /models
 // endpoint. Returns the available models on success.
 func (a *App) CheckProvider(baseURL, apiKey string) ([]RemoteModel, error) {
-	return a.ListRemoteModels(baseURL, apiKey)
+	Blogf("[provider] checking baseUrl=%s", baseURL)
+	models, err := a.ListRemoteModels(baseURL, apiKey)
+	if err != nil {
+		BlogErrf("[provider] check failed: %v", err)
+		return nil, err
+	}
+	Blogf("[provider] check ok, %d models found", len(models))
+	return models, nil
 }
 
 // RemoveModel unregisters a model by key.
@@ -599,4 +745,295 @@ func (a *App) GetModelInfo(key string) (*ModelInfo, error) {
 		}
 	}
 	return nil, fmt.Errorf("model not found: %s", key)
+}
+
+// ---------------------------------------------------------------------------
+// Local VL model (llama.cpp) support
+// ---------------------------------------------------------------------------
+
+// GPUInfoResult is the JSON-safe GPU detection result.
+type GPUInfoResult struct {
+	Vendor string `json:"vendor"`
+	Name   string `json:"name"`
+	VRAM   uint64 `json:"vram"`
+}
+
+// DetectGPU probes the system for a discrete GPU.
+func (a *App) DetectGPU() (*GPUInfoResult, error) {
+	info := gpu.DetectGPU()
+	return &GPUInfoResult{
+		Vendor: info.Vendor,
+		Name:   info.Name,
+		VRAM:   info.VRAM,
+	}, nil
+}
+
+// LLamaStatus describes the llama.cpp runtime state.
+type LLamaStatus struct {
+	Installed bool   `json:"installed"`
+	Version   string `json:"version"`
+	Backend   string `json:"backend"`
+	ServerOK  bool   `json:"serverOK"`
+}
+
+// GetLLamaStatus returns the current state of the llama.cpp runtime and server.
+func (a *App) GetLLamaStatus() (*LLamaStatus, error) {
+	st := a.llamaRM.Status()
+	serverOK := false
+	if a.llamaServer != nil {
+		serverOK = a.llamaServer.IsRunning()
+	}
+	return &LLamaStatus{
+		Installed: st.Installed,
+		Version:   st.Version,
+		Backend:   st.Backend,
+		ServerOK:  serverOK,
+	}, nil
+}
+
+// DownloadLLama downloads the llama.cpp runtime for the given backend
+// ("cuda-12.4", "cuda-13.3", "vulkan", "cpu"). Progress events are emitted
+// via Wails events.
+func (a *App) DownloadLLama(backend string) error {
+	Blogf("[llama] download started backend=%s", backend)
+	progress := make(chan float64, 32)
+	go func() {
+		for p := range progress {
+			runtime.EventsEmit(a.ctx, "llama:progress", p)
+		}
+	}()
+	if err := a.llamaRM.Download(backend, progress); err != nil {
+		BlogErrf("[llama] download failed: %v", err)
+		return err
+	}
+	Blogf("[llama] download complete backend=%s", backend)
+	// Persist the chosen backend in config.
+	a.cfgMu.Lock()
+	saved := a.loadConfig()
+	saved.LLamaBackend = backend
+	a.saveConfig(saved)
+	a.cfgMu.Unlock()
+	return nil
+}
+
+// SelectGGUFFile opens a native file dialog to choose a .gguf file.
+// kind is "model" or "mmproj".
+func (a *App) SelectGGUFFile(kind string) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app not started")
+	}
+	filter := "*.gguf"
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select " + kind + " file (.gguf)",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "GGUF Files", Pattern: filter},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// SetVLModel configures the VL model paths and dimensionality, then
+// persists them. If the server is running it is restarted with the new model.
+// projPath may be empty when the model .gguf already contains the projector.
+func (a *App) SetVLModel(modelPath, projPath string, dim int) error {
+	if modelPath == "" {
+		return fmt.Errorf("model path is required")
+	}
+	if dim <= 0 {
+		dim = 512 // default dimensionality for SmolVLM-500M
+	}
+
+	a.vlMu.Lock()
+	Blogf("[vl] configuring model=%s proj=%s dim=%d", modelPath, projPath, dim)
+
+	a.cfgMu.Lock()
+	a.vlModelPath = modelPath
+	a.vlProjPath = projPath
+	a.vlModelDim = dim
+
+	saved := a.loadConfig()
+	saved.VLModelPath = modelPath
+	saved.VLProjPath = projPath
+	saved.VLModelDim = dim
+	a.saveConfig(saved)
+	a.cfgMu.Unlock()
+
+	// Restart the server if it's running.
+	if a.llamaServer != nil && a.llamaServer.IsRunning() {
+		Blogf("[vl] stopping existing server")
+		_ = a.llamaServer.Stop()
+	}
+	if err := a.llamaServer.Start(modelPath, projPath); err != nil {
+		a.vlMu.Unlock()
+		BlogErrf("[vl] server start failed: %v", err)
+		return fmt.Errorf("start server: %w", err)
+	}
+	a.vlMu.Unlock()
+
+	// Wait for the server to be ready (without holding vlMu so StopLLamaServer can proceed).
+	Blogf("[vl] waiting for server to be ready...")
+	if err := a.llamaServer.WaitForReady(30 * time.Second); err != nil {
+		BlogErrf("[vl] server not ready: %v", err)
+		return fmt.Errorf("server not ready: %w", err)
+	}
+	Blogf("[vl] server ready on port %d", a.llamaServer.Port())
+
+	// Re-acquire lock for the remaining setup.
+	a.vlMu.Lock()
+	defer a.vlMu.Unlock()
+
+	// Bail if the server was stopped while we were waiting (e.g. user clicked Stop).
+	if !a.llamaServer.IsRunning() {
+		Blogf("[vl] server stopped during startup, aborting")
+		return fmt.Errorf("server was stopped during startup")
+	}
+
+	// Auto-detect embedding dimension from the running server.
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", a.llamaServer.Port())
+	if detectedDim, err := embedder.ProbeDim(serverURL); err != nil {
+		Blogf("[vl] could not auto-detect dimension: %v, using %d", err, dim)
+	} else {
+		Blogf("[vl] detected embedding dimension: %d", detectedDim)
+		dim = detectedDim
+		a.cfgMu.Lock()
+		a.vlModelDim = dim
+		saved := a.loadConfig()
+		saved.VLModelDim = dim
+		a.saveConfig(saved)
+		a.cfgMu.Unlock()
+	}
+
+	// Register the VL embedder.
+	a.registerVLEmbedder()
+	Blogf("[vl] VL embedder registered")
+	return nil
+}
+
+// StopLLamaServer stops the running llama.cpp server.
+func (a *App) StopLLamaServer() error {
+	a.vlMu.Lock()
+	defer a.vlMu.Unlock()
+
+	if a.llamaServer == nil || !a.llamaServer.IsRunning() {
+		return nil
+	}
+	Blogf("[vl] stopping server")
+	if err := a.llamaServer.Stop(); err != nil {
+		BlogErrf("[vl] stop server failed: %v", err)
+		return fmt.Errorf("stop server: %w", err)
+	}
+	Blogf("[vl] server stopped")
+	return nil
+}
+
+// SearchByImage encodes an image and searches the vector store for visually
+// similar images.
+func (a *App) SearchByImage(imagePath string, K int) ([]SearchHit, error) {
+	if K <= 0 {
+		K = defaultSearchLimit
+	}
+	if a.vlEmbedder == nil {
+		return nil, fmt.Errorf("VL model not configured")
+	}
+	if !a.llamaServer.IsRunning() {
+		return nil, fmt.Errorf("llama-server not running")
+	}
+
+	data, err := os.ReadFile(imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("read image: %w", err)
+	}
+	vec, err := a.vlEmbedder.EmbedImage(data)
+	if err != nil {
+		return nil, fmt.Errorf("embed image: %w", err)
+	}
+
+	res := a.store.Search(vec, "local", "vl", K)
+	if len(res) == 0 {
+		return []SearchHit{}, nil
+	}
+
+	ids := make([]int32, len(res))
+	for i, r := range res {
+		ids[i] = r.ID
+	}
+	images, ierr := a.pipeline.ImageRepo().GetImagesByIDs(ids)
+	if ierr != nil {
+		return nil, ierr
+	}
+
+	hits := make([]SearchHit, 0, len(res))
+	for _, r := range res {
+		img, ok := images[r.ID]
+		if !ok {
+			continue
+		}
+		hits = append(hits, SearchHit{
+			ID:     r.ID,
+			Path:   img.Path,
+			Prompt: img.Prompt,
+			Score:  r.Score,
+		})
+	}
+	return hits, nil
+}
+
+// SearchByImageDataURI encodes raw image bytes (base64 string) and searches
+// the vector store for visually similar images.
+func (a *App) SearchByImageDataURI(dataURI string, K int) ([]SearchHit, error) {
+	if K <= 0 {
+		K = defaultSearchLimit
+	}
+	if a.vlEmbedder == nil {
+		return nil, fmt.Errorf("VL model not configured")
+	}
+	if !a.llamaServer.IsRunning() {
+		return nil, fmt.Errorf("llama-server not running")
+	}
+
+	// Decode base64 data URI.
+	if idx := strings.Index(dataURI, ","); idx >= 0 {
+		dataURI = dataURI[idx+1:]
+	}
+	raw, err := base64.StdEncoding.DecodeString(dataURI)
+	if err != nil {
+		return nil, fmt.Errorf("decode base64: %w", err)
+	}
+
+	vec, err := a.vlEmbedder.EmbedImage(raw)
+	if err != nil {
+		return nil, fmt.Errorf("embed image: %w", err)
+	}
+
+	res := a.store.Search(vec, "local", "vl", K)
+	if len(res) == 0 {
+		return []SearchHit{}, nil
+	}
+
+	ids := make([]int32, len(res))
+	for i, r := range res {
+		ids[i] = r.ID
+	}
+	images, ierr := a.pipeline.ImageRepo().GetImagesByIDs(ids)
+	if ierr != nil {
+		return nil, ierr
+	}
+
+	hits := make([]SearchHit, 0, len(res))
+	for _, r := range res {
+		img, ok := images[r.ID]
+		if !ok {
+			continue
+		}
+		hits = append(hits, SearchHit{
+			ID:     r.ID,
+			Path:   img.Path,
+			Prompt: img.Prompt,
+			Score:  r.Score,
+		})
+	}
+	return hits, nil
 }

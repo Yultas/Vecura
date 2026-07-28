@@ -14,8 +14,20 @@ export function ClearDB() {
   return window['go']['api']['App']['ClearDB']();
 }
 
+export function DetectGPU() {
+  return window['go']['api']['App']['DetectGPU']();
+}
+
+export function DownloadLLama(arg1) {
+  return window['go']['api']['App']['DownloadLLama'](arg1);
+}
+
 export function GetConfig() {
   return window['go']['api']['App']['GetConfig']();
+}
+
+export function GetLLamaStatus() {
+  return window['go']['api']['App']['GetLLamaStatus']();
 }
 
 export function GetModelInfo(arg1) {
@@ -62,10 +74,30 @@ export function ScanFolder(arg1, arg2) {
   return window['go']['api']['App']['ScanFolder'](arg1, arg2);
 }
 
-export function Search(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['api']['App']['Search'](arg1, arg2, arg3, arg4, arg5);
+export function Search(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['api']['App']['Search'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function SearchByImage(arg1, arg2) {
+  return window['go']['api']['App']['SearchByImage'](arg1, arg2);
+}
+
+export function SearchByImageDataURI(arg1, arg2) {
+  return window['go']['api']['App']['SearchByImageDataURI'](arg1, arg2);
+}
+
+export function SelectGGUFFile(arg1) {
+  return window['go']['api']['App']['SelectGGUFFile'](arg1);
 }
 
 export function SetActiveModel(arg1) {
   return window['go']['api']['App']['SetActiveModel'](arg1);
+}
+
+export function SetVLModel(arg1, arg2, arg3) {
+  return window['go']['api']['App']['SetVLModel'](arg1, arg2, arg3);
+}
+
+export function StopLLamaServer() {
+  return window['go']['api']['App']['StopLLamaServer']();
 }

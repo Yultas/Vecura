@@ -44,6 +44,21 @@ func (r *Registry) RegisterRemote(e embedder.Embedder) *LoadedModel {
 	return lm
 }
 
+// RegisterLocal adds a local (server-backed) embedder such as VL.
+func (r *Registry) RegisterLocal(e embedder.Embedder) *LoadedModel {
+	lm := &LoadedModel{
+		Key:      e.Key(),
+		Provider: "local",
+		ModelID:  e.Key(),
+		Embedder: e,
+		Local:    true,
+	}
+	r.mu.Lock()
+	r.models[lm.Key] = lm
+	r.mu.Unlock()
+	return lm
+}
+
 // Unload removes a model by key.
 func (r *Registry) Unload(key string) {
 	r.mu.Lock()

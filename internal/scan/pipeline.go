@@ -46,6 +46,9 @@ type Pipeline struct {
 	cache    *embedder.Cache
 	thumbDir string
 
+	vlEmbedder embedder.Embedder // optional VL embedder for image embeddings
+	Logf       func(string, ...interface{})
+
 	progMu   sync.Mutex
 	progress Progress
 
@@ -66,6 +69,7 @@ func NewPipeline(d *sql.DB, m *models.Registry, s *vector.VectorStore, thumbDir 
 		cache:    embedder.NewCache(),
 		thumbDir: thumbDir,
 		sub:      make(map[chan Progress]struct{}),
+		Logf:     func(f string, a ...interface{}) { log.Printf(f, a...) },
 	}
 }
 
@@ -73,14 +77,15 @@ func NewPipeline(d *sql.DB, m *models.Registry, s *vector.VectorStore, thumbDir 
 // different vector store (used to rebuild an independent store from DB).
 func NewPipelineFromStore(p *Pipeline, s *vector.VectorStore) *Pipeline {
 	return &Pipeline{
-		db:       p.db,
-		imgRepo:  p.imgRepo,
-		embRepo:  p.embRepo,
-		models:   p.models,
-		store:    s,
-		cache:    p.cache,
-		thumbDir: p.thumbDir,
-		sub:      make(map[chan Progress]struct{}),
+		db:         p.db,
+		imgRepo:    p.imgRepo,
+		embRepo:    p.embRepo,
+		models:     p.models,
+		store:      s,
+		cache:      p.cache,
+		thumbDir:   p.thumbDir,
+		vlEmbedder: p.vlEmbedder,
+		sub:        make(map[chan Progress]struct{}),
 	}
 }
 
@@ -96,6 +101,12 @@ func (p *Pipeline) Unsubscribe(ch chan Progress) {
 	p.subMu.Lock()
 	delete(p.sub, ch)
 	p.subMu.Unlock()
+}
+
+// SetVLEmbedder configures an optional VL embedder. When set, the scan
+// pipeline will also create visual embeddings for each image during scan.
+func (p *Pipeline) SetVLEmbedder(e embedder.Embedder) {
+	p.vlEmbedder = e
 }
 
 // ImageRepo exposes the underlying image repository for the API layer.
@@ -197,6 +208,15 @@ func (p *Pipeline) ScanFolder(ctx context.Context, root, modelKey string) error 
 		return fmt.Errorf("preload embeddings: %w", err)
 	}
 
+	// Load VL-embedded set if VL embedder is configured.
+	var vlEmb map[int32]bool
+	if p.vlEmbedder != nil {
+		vlEmb, err = p.embRepo.GetEmbeddedImageIDs("local", p.vlEmbedder.Key())
+		if err != nil {
+			return fmt.Errorf("preload VL embeddings: %w", err)
+		}
+	}
+
 	fileCh := make(chan string)
 	var wg sync.WaitGroup
 	batch := effectiveBatch(e)
@@ -204,7 +224,7 @@ func (p *Pipeline) ScanFolder(ctx context.Context, root, modelKey string) error 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p.workerScan(ctx, fileCh, e, batch, known, embedded)
+			p.workerScan(ctx, fileCh, e, batch, known, embedded, vlEmb)
 		}()
 	}
 
@@ -230,15 +250,16 @@ feed:
 // embedded are read-only snapshots taken once by ScanFolder before any
 // worker starts, so per-file decisions (new / unchanged / prompt-changed /
 // already embedded) are plain map lookups instead of a DB round trip.
-func (p *Pipeline) workerScan(ctx context.Context, fileCh <-chan string, e embedder.Embedder, batch int, known map[string]db.ImageIDPrompt, embedded map[int32]bool) {
+func (p *Pipeline) workerScan(ctx context.Context, fileCh <-chan string, e embedder.Embedder, batch int, known map[string]db.ImageIDPrompt, embedded map[int32]bool, vlEmb map[int32]bool) {
 	prompts := make([]string, 0, batch)
 	ids := make([]int32, 0, batch)
 	paths := make([]string, 0, batch)
+	var vlPending sync.Map // imageID -> path for images needing VL embedding
 	flush := func() {
 		if len(prompts) == 0 {
 			return
 		}
-		p.flushBatch(e, prompts, ids, paths)
+		p.flushBatch(e, prompts, ids, paths, &vlPending)
 		prompts = prompts[:0]
 		ids = ids[:0]
 		paths = paths[:0]
@@ -254,21 +275,13 @@ func (p *Pipeline) workerScan(ctx context.Context, fileCh <-chan string, e embed
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Printf("[scan] recovered panic on %s: %v", f, r)
+					p.Logf("[scan] recovered panic on %s: %v", f, r)
 				}
 			}()
-			// Thumbnails only need to be (re)generated once per file: skip the
-			// decode/resize/encode entirely when one already exists. This used
-			// to run unconditionally on every scan, which meant re-scanning an
-			// already-indexed folder still fully decoded and re-encoded every
-			// image just to throw the identical result away.
 			if !thumbnailUpToDate(f, p.thumbDir) {
 				_ = generateThumbnail(f, p.thumbDir)
 			}
 
-			// Read the file's metadata once and derive both the raw prompt
-			// (stored for display) and the embed text (positive prompt only)
-			// from it, instead of two independent extraction passes.
 			rawPrompt, embedText := ExtractPromptData(f)
 			if rawPrompt == "" {
 				rawPrompt = filepath.Base(f)
@@ -276,9 +289,6 @@ func (p *Pipeline) workerScan(ctx context.Context, fileCh <-chan string, e embed
 			}
 			prompt := rawPrompt
 
-			// Decide what (if anything) needs to change, purely from the
-			// snapshots taken once at the start of ScanFolder — no DB access
-			// for files that are already indexed with an unchanged prompt.
 			row, exists := known[f]
 			var id int32
 			has := false
@@ -287,10 +297,6 @@ func (p *Pipeline) workerScan(ctx context.Context, fileCh <-chan string, e embed
 			if exists {
 				id = row.ID
 				has = embedded[id]
-				// Re-embed when the prompt we now have is more useful than what
-				// was embedded before: first scan stored the filename (or
-				// nothing) but we now extracted a real prompt, or the prompt
-				// text changed.
 				if has {
 					switch {
 					case row.Prompt == "" || row.Prompt == filepath.Base(f):
@@ -307,38 +313,95 @@ func (p *Pipeline) workerScan(ctx context.Context, fileCh <-chan string, e embed
 					newID, uerr := p.imgRepo.UpsertImage(f, prompt)
 					if uerr != nil {
 						p.dbMu.Unlock()
-						log.Printf("[scan] upsert failed for %s: %v", f, uerr)
+						p.Logf("[scan] upsert failed for %s: %v", f, uerr)
 						return
 					}
 					id = newID
 				}
 				if needReembed {
 					if derr := p.embRepo.DeleteEmbedding(id, "remote", e.Key()); derr != nil {
-						log.Printf("[scan] delete stale embedding for %s: %v", f, derr)
+						p.Logf("[scan] delete stale embedding for %s: %v", f, derr)
+					}
+					// Also delete stale VL embedding.
+					if p.vlEmbedder != nil {
+						_ = p.embRepo.DeleteEmbedding(id, "local", p.vlEmbedder.Key())
 					}
 					has = false
 				}
 				p.dbMu.Unlock()
 			}
 
+			// Check VL embedding status for skip logic.
+			needsVL := false
+			if p.vlEmbedder != nil && id > 0 {
+				if vlEmb == nil || !vlEmb[id] {
+					needsVL = true
+				}
+			}
+
 			// Incremental: skip images already embedded with this model,
 			// unless we just decided to re-embed above.
-			if has {
+			if has && !needsVL {
 				return
 			}
-			if v, ok := p.cache.Get(f, embedText, e.Key()); ok {
-				p.store.Add(id, "remote", e.Key(), v)
-				return
+			if !has {
+				if v, ok := p.cache.Get(f, embedText, e.Key()); ok {
+					p.store.Add(id, "remote", e.Key(), v)
+					// Still need VL even if text is cached.
+					if needsVL {
+						prompts = append(prompts, embedText)
+						ids = append(ids, id)
+						paths = append(paths, f)
+					}
+					return
+				}
 			}
-			prompts = append(prompts, embedText)
-			ids = append(ids, id)
-			paths = append(paths, f)
-			if len(prompts) >= batch {
-				flush()
+			if !has {
+				prompts = append(prompts, embedText)
+				ids = append(ids, id)
+				paths = append(paths, f)
+				if len(prompts) >= batch {
+					flush()
+				}
+			}
+			// Collect images that need VL embedding.
+			if needsVL {
+				vlPending.Store(id, f)
 			}
 		}()
 	}
 	flush()
+
+	// VL embedding pass: create visual embeddings for all collected images.
+	if p.vlEmbedder != nil {
+		vlPending.Range(func(key, value interface{}) bool {
+			id := key.(int32)
+			f := value.(string)
+			data, err := os.ReadFile(f)
+			if err != nil {
+				p.Logf("[scan] read image for VL embedding failed %s: %v", f, err)
+				return true
+			}
+			vec, err := p.vlEmbedder.(*embedder.LLamaVLEmbedder).EmbedImage(data)
+			if err != nil {
+				p.Logf("[scan] VL embed failed for %s: %v", f, err)
+				return true
+			}
+			if len(vec) == 0 {
+				return true
+			}
+			p.store.Add(id, "local", p.vlEmbedder.Key(), vec)
+			p.dbMu.Lock()
+			err = p.embRepo.BatchInsertEmbeddings([]db.EmbeddingRow{{
+				ImageID: id, Provider: "local", ModelID: p.vlEmbedder.Key(), Dim: len(vec), Vector: vec,
+			}})
+			p.dbMu.Unlock()
+			if err != nil {
+				p.Logf("[scan] persist VL embedding failed for %s: %v", f, err)
+			}
+			return true
+		})
+	}
 }
 
 // effectiveBatch returns the embedding batch size for the model. For the
@@ -357,10 +420,10 @@ func effectiveBatch(e embedder.Embedder) int {
 // thumbnail for each path was already generated by workerScan before the
 // file was queued here, so it is not regenerated (that used to double the
 // decode/resize/encode cost for every newly embedded image).
-func (p *Pipeline) flushBatch(e embedder.Embedder, prompts []string, ids []int32, paths []string) {
+func (p *Pipeline) flushBatch(e embedder.Embedder, prompts []string, ids []int32, paths []string, _ *sync.Map) {
 	vecs, err := e.Embed(prompts)
 	if err != nil {
-		log.Printf("[scan] embed failed for %d items: %v", len(prompts), err)
+		p.Logf("[scan] embed failed for %d items: %v", len(prompts), err)
 		return
 	}
 	rows := make([]db.EmbeddingRow, 0, len(prompts))
@@ -384,7 +447,7 @@ func (p *Pipeline) flushBatch(e embedder.Embedder, prompts []string, ids []int32
 		err := p.embRepo.BatchInsertEmbeddings(rows)
 		p.dbMu.Unlock()
 		if err != nil {
-			log.Printf("[scan] persist embeddings failed: %v", err)
+			p.Logf("[scan] persist embeddings failed: %v", err)
 		}
 	}
 }

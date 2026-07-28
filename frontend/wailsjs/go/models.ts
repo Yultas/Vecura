@@ -22,6 +22,40 @@ export namespace api {
 	        this.batch = source["batch"];
 	    }
 	}
+	export class GPUInfoResult {
+	    vendor: string;
+	    name: string;
+	    vram: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GPUInfoResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vendor = source["vendor"];
+	        this.name = source["name"];
+	        this.vram = source["vram"];
+	    }
+	}
+	export class LLamaStatus {
+	    installed: boolean;
+	    version: string;
+	    backend: string;
+	    serverOK: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LLamaStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.version = source["version"];
+	        this.backend = source["backend"];
+	        this.serverOK = source["serverOK"];
+	    }
+	}
 	export class ModelInfo {
 	    key: string;
 	    provider: string;
@@ -216,6 +250,10 @@ export namespace api {
 	    activeModel: string;
 	    folderPath: string;
 	    models: modelCfg[];
+	    llamaBackend: string;
+	    vlModelPath: string;
+	    vlProjPath: string;
+	    vlModelDim: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new appConfig(source);
@@ -230,6 +268,10 @@ export namespace api {
 	        this.activeModel = source["activeModel"];
 	        this.folderPath = source["folderPath"];
 	        this.models = this.convertValues(source["models"], modelCfg);
+	        this.llamaBackend = source["llamaBackend"];
+	        this.vlModelPath = source["vlModelPath"];
+	        this.vlProjPath = source["vlProjPath"];
+	        this.vlModelDim = source["vlModelDim"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -5,10 +5,19 @@
     <el-alert v-else-if="presets.length === 0" type="info" :closable="false" title="No provider presets loaded" />
 
     <template v-if="ready && !backendError">
-      <div class="section-title">Provider</div>
+      <div class="section-title model-head">
+        <span>Provider</span>
+        <button
+          class="collapse-btn"
+          type="button"
+          :title="providerCollapsed ? 'Expand' : 'Collapse'"
+          @click="providerCollapsed = !providerCollapsed"
+        >{{ providerCollapsed ? '+' : '−' }}</button>
+      </div>
 
-      <!-- Provider picker (custom frosted segmented control) -->
-      <div class="provider-grid">
+      <template v-if="!providerCollapsed">
+        <!-- Provider picker (custom frosted segmented control) -->
+        <div class="provider-grid">
         <button
           v-for="p in presets"
           :key="p.id"
@@ -129,6 +138,7 @@
 
       </div>
       </template>
+      </template>
 
       <!-- Selection confirm + active model (kept visible while the list is collapsed) -->
       <button
@@ -179,6 +189,116 @@
         <span class="folder-cta">Choose…</span>
       </div>
 
+      <!-- Local Model -->
+      <div class="section-title">Local Model</div>
+
+      <!-- GPU Detection -->
+      <div class="field-block">
+        <label class="field-label">GPU</label>
+        <div class="gpu-row">
+          <span class="gpu-text">{{ gpuInfo ? gpuInfo.name + ' (' + gpuInfo.vendor + ')' : 'Not detected' }}</span>
+          <button class="field-check" :disabled="gpuLoading" @click="detectGPU">
+            <LoaderCircle v-if="gpuLoading" class="spin" />
+            <span v-else>Detect</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Runtime status -->
+      <div class="field-block">
+        <label class="field-label">Runtime</label>
+        <div v-if="llamaStatus.installed" class="gpu-row">
+          <span class="gpu-text">v{{ llamaStatus.version }} ({{ llamaStatus.backend }})</span>
+          <span class="field-badge ok"><svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+        <div v-else class="gpu-row">
+          <span class="gpu-text">Not installed</span>
+        </div>
+      </div>
+
+      <!-- Backend selection + download -->
+      <div class="field-block">
+        <label class="field-label">Download runtime</label>
+        <div class="field">
+          <div class="select-wrap" :class="{ open: backendOpen }">
+            <button
+              type="button"
+              class="field-input select-trigger"
+              :disabled="downloading"
+              @click="backendOpen = !backendOpen"
+              @blur="onBackendBlur"
+            >
+              <span>{{ backendLabel }}</span>
+              <svg class="select-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            <div v-if="backendOpen" class="select-menu">
+              <button
+                v-for="opt in backendOptions"
+                :key="opt.value"
+                type="button"
+                class="select-option"
+                :class="{ active: opt.value === selectedBackend }"
+                @mousedown.prevent="chooseBackend(opt.value)"
+              >{{ opt.label }}</button>
+            </div>
+          </div>
+          <button class="field-check" :disabled="downloading" @click="downloadRuntime">
+            <LoaderCircle v-if="downloading" class="spin" />
+            <span v-else>Download</span>
+          </button>
+        </div>
+        <div v-if="downloadProgress > 0 && downloading" class="progress-bar">
+          <div class="progress-fill" :style="{ width: Math.round(downloadProgress * 100) + '%' }"></div>
+        </div>
+      </div>
+
+      <!-- VL Model selection -->
+      <div class="field-block">
+        <label class="field-label">Vision Model (.gguf)</label>
+        <div class="field">
+          <input
+            v-model="vlModelPath"
+            class="field-input"
+            placeholder="Path to model.gguf"
+            readonly
+          />
+          <button class="field-check" @click="browseVLModel">Browse…</button>
+        </div>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Multimodal Projector (.gguf) <small style="color:var(--fg-3)">(optional)</small></label>
+        <div class="field">
+          <input
+            v-model="vlProjPath"
+            class="field-input"
+            placeholder="Path to mmproj.gguf"
+            readonly
+          />
+          <button class="field-check" @click="browseVLProj">Browse…</button>
+        </div>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Embedding Dimension</label>
+        <div class="field">
+          <input
+            v-model.number="vlDim"
+            class="field-input"
+            type="number"
+            placeholder="512"
+          />
+          <button class="primary-btn" style="height:30px;font-size:0.82rem" :disabled="!vlModelPath || vlStarting" @click="applyVLModel">
+            <LoaderCircle v-if="vlStarting" class="spin" />
+            <span v-else>Start Server</span>
+          </button>
+          <button v-if="llamaStatus.serverOK" class="ghost-btn danger" style="height:30px;font-size:0.82rem;margin-left:6px" :disabled="serverStopping" @click="stopServer">
+            <LoaderCircle v-if="serverStopping" class="spin" />
+            <span v-else>Stop Server</span>
+          </button>
+        </div>
+      </div>
+
       <!-- App Data -->
       <div class="section-title">App Data</div>
       <button class="ghost-btn danger" :disabled="clearing" @click="clearDB">
@@ -194,7 +314,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { LoaderCircle, Eye, EyeOff } from '@lucide/vue'
 import { call } from '../api.js'
-import { PickFolder, GetModelInfo } from '../../wailsjs/go/api/App.js'
+import { PickFolder, GetModelInfo, DetectGPU, GetLLamaStatus, DownloadLLama, SelectGGUFFile, SetVLModel, StopLLamaServer } from '../../wailsjs/go/api/App.js'
 
 const props = defineProps({
   models: { type: Array, default: () => [] },
@@ -218,9 +338,42 @@ const selectedInfo = ref(null)
 const folderPath = ref('')
 const modelQuery = ref('')
 const modelsCollapsed = ref(false)
+const providerCollapsed = ref(false)
 const manualModel = ref('')
 const clearing = ref(false)
 const savedProviders = ref({})  // provider id -> { baseUrl, apiKey } from config
+
+// Local VL model state
+const gpuInfo = ref(null)
+const gpuLoading = ref(false)
+const llamaStatus = ref({ installed: false, version: '', backend: '', serverOK: false })
+const selectedBackend = ref('cuda-12.4')
+const backendOpen = ref(false)
+const backendOptions = [
+  { value: 'cuda-12.4', label: 'CUDA 12.4 (NVIDIA)' },
+  { value: 'cuda-13.3', label: 'CUDA 13.3 (NVIDIA)' },
+  { value: 'vulkan', label: 'Vulkan (AMD/Intel)' },
+  { value: 'cpu', label: 'CPU only' },
+]
+const backendLabel = computed(() => {
+  const o = backendOptions.find((x) => x.value === selectedBackend.value)
+  return o ? o.label : selectedBackend.value
+})
+function chooseBackend(v) {
+  selectedBackend.value = v
+  backendOpen.value = false
+}
+function onBackendBlur() {
+  // Close shortly after blur so option mousedown still registers.
+  setTimeout(() => { backendOpen.value = false }, 120)
+}
+const downloading = ref(false)
+const downloadProgress = ref(0)
+const vlModelPath = ref('')
+const vlProjPath = ref('')
+const vlDim = ref(512)
+const vlStarting = ref(false)
+const serverStopping = ref(false)
 
 const urlState = ref('')   // '', 'valid', 'invalid'
 const keyState = ref('')   // '', 'valid', 'invalid'
@@ -395,6 +548,91 @@ async function clearDB() {
   }
 }
 
+// ---- Local VL Model functions ----------------------------------------------
+
+async function detectGPU() {
+  gpuLoading.value = true
+  try {
+    gpuInfo.value = await DetectGPU()
+  } catch (e) {
+    ElMessage.error('GPU detection failed: ' + e)
+  } finally {
+    gpuLoading.value = false
+  }
+}
+
+async function refreshLLamaStatus() {
+  try {
+    llamaStatus.value = await GetLLamaStatus()
+  } catch (_) {}
+}
+
+async function downloadRuntime() {
+  downloading.value = true
+  downloadProgress.value = 0
+  try {
+    // Listen for progress events.
+    const off = window.runtime && window.runtime.EventsOn
+      ? window.runtime.EventsOn('llama:progress', (p) => { downloadProgress.value = p })
+      : null
+    await DownloadLLama(selectedBackend.value)
+    if (off) off()
+    downloadProgress.value = 1
+    ElMessage.success('Runtime downloaded')
+    await refreshLLamaStatus()
+  } catch (e) {
+    ElMessage.error('Download failed: ' + e)
+  } finally {
+    downloading.value = false
+  }
+}
+
+async function browseVLModel() {
+  try {
+    const p = await SelectGGUFFile('model')
+    if (p) vlModelPath.value = p
+  } catch (_) {}
+}
+
+async function browseVLProj() {
+  try {
+    const p = await SelectGGUFFile('mmproj')
+    if (p) vlProjPath.value = p
+  } catch (_) {}
+}
+
+async function applyVLModel() {
+  if (!vlModelPath.value) return
+  vlStarting.value = true
+  try {
+    await SetVLModel(vlModelPath.value, vlProjPath.value || '', vlDim.value || 512)
+    try {
+      const cfg = await call('GetConfig')
+      if (cfg.vlModelDim) vlDim.value = cfg.vlModelDim
+    } catch (_) {}
+    const isVL = !!vlProjPath.value
+    ElMessage.success(isVL ? 'VL model started' : 'Local model started')
+    llamaStatus.value = { ...llamaStatus.value, serverOK: true }
+  } catch (e) {
+    ElMessage.error('Model failed: ' + e)
+  } finally {
+    vlStarting.value = false
+  }
+}
+
+async function stopServer() {
+  serverStopping.value = true
+  try {
+    await StopLLamaServer()
+    ElMessage.success('Server stopped')
+    llamaStatus.value = { ...llamaStatus.value, serverOK: false }
+  } catch (e) {
+    ElMessage.error('Stop failed: ' + e)
+  } finally {
+    serverStopping.value = false
+  }
+}
+
 // ---- Persistence ----------------------------------------------------------
 // Critical fields (provider, baseUrl, apiKey, selectedModel) are saved
 // immediately so closing the app never loses them. Non-critical fields
@@ -439,6 +677,11 @@ async function restoreSettings() {
     if (cfg.fetchedModels && cfg.fetchedModels.length) fetchedModels.value = cfg.fetchedModels
     if (cfg.selectedModel) selectedModel.value = cfg.selectedModel
     if (cfg.folderPath) folderPath.value = cfg.folderPath
+    // Restore VL model settings.
+    if (cfg.vlModelPath) vlModelPath.value = cfg.vlModelPath
+    if (cfg.vlProjPath) vlProjPath.value = cfg.vlProjPath
+    if (cfg.vlModelDim) vlDim.value = cfg.vlModelDim
+    if (cfg.llamaBackend) selectedBackend.value = cfg.llamaBackend
     // Restore the active model card so it is visible immediately on restart.
     if (cfg.activeModel) {
       try {
@@ -487,7 +730,11 @@ onMounted(async () => {
     // without the user clicking "Check" again (the immediate request on
     // relaunch). We always refresh rather than trust the cached list, so the
     // connection is validated and the model list stays current.
-    if (baseUrl.value) {
+    // Skip cloud provider check if a model is already active (e.g. via runtime).
+    if (selectedInfo.value) {
+      providerCollapsed.value = true
+      restoring.value = false
+    } else if (baseUrl.value) {
       check(true).then(() => { restoring.value = false }).catch(() => { restoring.value = false })
     } else {
       restoring.value = false
@@ -498,6 +745,9 @@ onMounted(async () => {
     console.error('[settings] ProviderPresets failed:', e)
     restoring.value = false
   }
+  // Detect GPU and refresh llama status in background (non-blocking).
+  detectGPU()
+  refreshLLamaStatus()
 })
 
 // Flush any pending persist when the component is destroyed (e.g. app close).
@@ -687,8 +937,8 @@ onBeforeUnmount(() => {
 .model-ctx { color: var(--fg-3); font-size: 0.74rem; }
 
 .primary-btn {
-  margin-top: 4px;
   height: 40px;
+  flex: none;
   border: none;
   border-radius: 12px;
   background: var(--accent);
@@ -776,5 +1026,91 @@ onBeforeUnmount(() => {
   padding: 6px 10px; border-radius: 8px;
   background: var(--field-bg);
   flex: none;
+}
+
+/* Local VL Model section */
+.gpu-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+}
+.gpu-text {
+  flex: 1; min-width: 0;
+  font-size: 0.84rem; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Custom backend dropdown — native <select> popup ignores CSS in
+   WebView2 (renders a white system widget), so we use a div-based menu
+   that fully respects the theme. */
+.select-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.88rem;
+  font-family: var(--font);
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  outline: none;
+  text-align: left;
+}
+.select-trigger:disabled { cursor: default; opacity: 0.6; }
+.select-caret {
+  width: 14px; height: 14px;
+  flex: none;
+  color: var(--fg-3);
+  transition: transform 0.18s var(--ease);
+}
+.select-wrap.open .select-caret { transform: rotate(180deg); }
+.select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--el-bg-color-overlay, rgba(28, 28, 30, 0.96));
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-pop);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+.select-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.86rem;
+  font-family: var(--font);
+  cursor: pointer;
+}
+.select-option:hover { background: var(--field-bg-focus); }
+.select-option.active { color: var(--accent); font-weight: 600; }
+.progress-bar {
+  margin-top: 8px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--field-bg);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s var(--ease);
 }
 </style>

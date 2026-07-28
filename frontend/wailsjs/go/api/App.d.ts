@@ -8,7 +8,13 @@ export function CheckProvider(arg1:string,arg2:string):Promise<Array<api.RemoteM
 
 export function ClearDB():Promise<void>;
 
+export function DetectGPU():Promise<api.GPUInfoResult>;
+
+export function DownloadLLama(arg1:string):Promise<void>;
+
 export function GetConfig():Promise<api.appConfig>;
+
+export function GetLLamaStatus():Promise<api.LLamaStatus>;
 
 export function GetModelInfo(arg1:string):Promise<api.ModelInfo>;
 
@@ -32,6 +38,16 @@ export function SaveSettings(arg1:api.SaveSettingsReq):Promise<void>;
 
 export function ScanFolder(arg1:string,arg2:string):Promise<void>;
 
-export function Search(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<Array<api.SearchHit>>;
+export function Search(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string,arg6:string):Promise<Array<api.SearchHit>>;
+
+export function SearchByImage(arg1:string,arg2:number):Promise<Array<api.SearchHit>>;
+
+export function SearchByImageDataURI(arg1:string,arg2:number):Promise<Array<api.SearchHit>>;
+
+export function SelectGGUFFile(arg1:string):Promise<string>;
 
 export function SetActiveModel(arg1:string):Promise<void>;
+
+export function SetVLModel(arg1:string,arg2:string,arg3:number):Promise<void>;
+
+export function StopLLamaServer():Promise<void>;

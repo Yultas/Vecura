@@ -10,14 +10,17 @@ import (
 
 	"vecura/internal/api"
 	"vecura/internal/db"
+	"vecura/internal/llama"
 	"vecura/internal/models"
 	"vecura/internal/scan"
 	"vecura/internal/vector"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -53,7 +56,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	app := api.NewApp(d, pipeline, store, registry, thumbDir)
+	// llama.cpp runtime and server for local VL embeddings.
+	llamaDir := filepath.Join(appDir, "llama")
+	llamaRM := llama.NewRuntimeManager(llamaDir)
+	llamaSrv := llama.NewServer(llamaRM)
+
+	app := api.NewApp(d, pipeline, store, registry, thumbDir, llamaRM, llamaSrv)
 
 	// Load a local .env file (if present) so OPENROUTER_API_KEY and
 	// friends are visible via os.Getenv. System env vars always win.
@@ -61,14 +69,27 @@ func main() {
 	loadEnvFile(".env")
 	loadEnvFile(filepath.Join(appDir, ".env"))
 
+	// System tray: closing the window hides it (and removes it from the
+	// taskbar) instead of quitting. The tray icon stays and can re-open it.
+	trayMenu := menu.NewMenu()
+	trayMenu.AddText("Show Vecura", nil, func(_ *menu.CallbackData) {
+		runtime.WindowShow(app.GetCtx())
+	})
+	trayMenu.AddSeparator()
+	trayMenu.AddText("Quit", nil, func(_ *menu.CallbackData) {
+		runtime.Quit(app.GetCtx())
+	})
+
 	err = wails.Run(&options.App{
-		Title:            "Vecura",
-		Width:            defaultWindowWidth,
-		Height:           defaultWindowHeight,
-		MinWidth:         api.MinWindowWidth,
-		MinHeight:        api.MinWindowHeight,
-		Frameless:        true,
-		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		Title:             "Vecura",
+		Width:             defaultWindowWidth,
+		Height:            defaultWindowHeight,
+		MinWidth:          api.MinWindowWidth,
+		MinHeight:         api.MinWindowHeight,
+		Frameless:         true,
+		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		TrayMenu:          trayMenu,
+		HideWindowOnClose: true,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: localThumbnailHandler(thumbDir),
@@ -81,7 +102,8 @@ func main() {
 			WindowIsTranslucent:               true,
 			DisableFramelessWindowDecorations: false,
 		},
-		OnStartup: app.Startup,
+		OnStartup:  app.Startup,
+		OnShutdown: app.Shutdown,
 		Bind: []interface{}{
 			app,
 		},

@@ -27,3 +27,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local agent / bridge state (never commit)
+.threadbridge/
+
