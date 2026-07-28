@@ -24,7 +24,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed build/appicon.ico
+//go:embed internal/tray/icon.ico
 var trayIcon []byte
 
 // defaultWindowWidth/defaultWindowHeight are the initial window size used
