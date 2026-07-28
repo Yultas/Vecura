@@ -108,7 +108,7 @@ import LogsView from './views/LogsView.vue'
 import { call, eventsOn } from './api.js'
 import { pushLog } from './logger.js'
 import { Settings as SettingsIcon, CircleHelp, ScrollText, X, Minus, Square, Moon, Sun, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
-import { WindowMinimise, WindowToggleMaximise, Quit } from '../wailsjs/runtime/runtime.js'
+import { WindowMinimise, WindowToggleMaximise, WindowHide } from '../wailsjs/runtime/runtime.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -156,7 +156,8 @@ function onMenu(index) {
 }
 
 // Win64 window controls (frameless app has no OS chrome)
-function winClose() { Quit() }
+// Closing hides the window (it stays in the system tray) instead of quitting.
+function winClose() { WindowHide() }
 function winMin() { WindowMinimise() }
 function winMax() { WindowToggleMaximise() }
 
