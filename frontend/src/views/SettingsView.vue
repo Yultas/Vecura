@@ -11,12 +11,9 @@
         <span v-else-if="updateChecking" class="update-new">Checking for updates…</span>
         <span v-else class="update-new">Keep Vecura up to date</span>
       </div>
-      <button class="ghost-btn" :disabled="updateChecking || updateDownloading" @click="checkForUpdates(true)">
-        {{ updateChecking ? 'Checking…' : 'Check for updates' }}
-      </button>
       <button v-if="updateInfo?.available" class="primary-btn update-btn" :disabled="updateDownloading" @click="downloadUpdate">
         <LoaderCircle v-if="updateDownloading" class="spin" />
-        <span v-else>Download and restart</span>
+        <span v-else>Update</span>
       </button>
     </div>
 
