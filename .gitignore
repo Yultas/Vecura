@@ -1,6 +1,8 @@
 # Everything Wails generates under build/ is disposable, including the
 # NSIS installer script it creates on `wails build` runs.
-build/
+build/*
+!build/
+!build/appicon.png
 dist/
 *.db
 *.db-wal
