@@ -1,0 +1,711 @@
+/* =========================================================================
+   Vecura — Apple-style design system
+   macOS-native aesthetic: frosted materials, layered depth, fluid motion.
+   ========================================================================= */
+
+:root {
+  /* Type */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+
+  /* Dark materials (default) */
+  --win-material: rgba(22, 22, 30, 0.55);
+  --title-material: rgba(32, 32, 42, 0.62);
+  --side-material: rgba(40, 40, 52, 0.50);
+  --main-material: rgba(28, 28, 36, 0.42);
+  --card-material: rgba(255, 255, 255, 0.05);
+  --pop-material: rgba(36, 36, 46, 0.72);
+
+  /* Hairlines & separators */
+  --hairline: rgba(255, 255, 255, 0.10);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+
+  /* Foreground */
+  --fg: #d4d0a7;
+  --fg-2: #d4d0a7;
+  --fg-3: #b3b08a;
+
+  /* System colors */
+  --accent: #0a84ff;
+  --accent-press: #0a6fd6;
+  --green: #30d158;
+  --red: #ff453a;
+  --yellow: #ffd60a;
+  --orange: #ff9f0a;
+
+  /* Fields */
+  --field-bg: rgba(255, 255, 255, 0.06);
+  --field-bg-focus: rgba(255, 255, 255, 0.10);
+  --field-border: rgba(255, 255, 255, 0.12);
+  --field-border-focus: rgba(10, 132, 255, 0.65);
+
+  /* Depth */
+  --shadow-card: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-float: 0 24px 70px rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 30px 90px rgba(0, 0, 0, 0.6);
+
+  /* Radii */
+  --radius-win: 20px;
+  --radius-card: 16px;
+  --radius-field: 10px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---- Element Plus theming (so EP controls match the app theme) -------- */
+html[data-theme="dark"] {
+  --el-bg-color: rgba(28, 28, 30, 0.72);
+  --el-bg-color-overlay: rgba(28, 28, 30, 0.9);
+  --el-fill-color-blank: rgba(255, 255, 255, 0.05);
+  --el-fill-color: rgba(255, 255, 255, 0.06);
+  --el-fill-color-light: rgba(255, 255, 255, 0.1);
+  --el-text-color-primary: var(--fg);
+  --el-text-color-regular: var(--fg);
+  --el-text-color-secondary: var(--fg-3);
+  --el-text-color-placeholder: var(--fg-3);
+  --el-border-color: var(--hairline);
+  --el-border-color-light: var(--hairline);
+  --el-border-color-lighter: var(--hairline);
+  --el-color-primary: #0a84ff;
+  --el-mask-color: rgba(0, 0, 0, 0.5);
+}
+html[data-theme="light"] {
+  --win-material: rgba(255, 255, 255, 0.60);
+  --title-material: rgba(255, 255, 255, 0.72);
+  --side-material: rgba(246, 246, 248, 0.66);
+  --main-material: rgba(255, 255, 255, 0.48);
+  --card-material: rgba(255, 255, 255, 0.55);
+  --pop-material: rgba(250, 250, 252, 0.82);
+
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.14);
+
+  --fg: #b36a64;
+  --fg-2: #b36a64;
+  --fg-3: #a05e58;
+
+  --accent: #007aff;
+  --accent-press: #0062cc;
+  --green: #248a3d;
+  --red: #ff3b30;
+
+  --field-bg: rgba(0, 0, 0, 0.04);
+  --field-bg-focus: rgba(0, 0, 0, 0.06);
+  --field-border: rgba(0, 0, 0, 0.10);
+  --field-border-focus: rgba(0, 122, 255, 0.65);
+
+  --el-bg-color: rgba(255, 255, 255, 0.82);
+  --el-bg-color-overlay: rgba(255, 255, 255, 0.95);
+  --el-fill-color-blank: rgba(0, 0, 0, 0.03);
+  --el-fill-color: rgba(0, 0, 0, 0.04);
+  --el-fill-color-light: rgba(0, 0, 0, 0.06);
+  --el-text-color-primary: var(--fg);
+  --el-text-color-regular: var(--fg);
+  --el-text-color-secondary: var(--fg-3);
+  --el-text-color-placeholder: var(--fg-3);
+  --el-border-color: var(--hairline);
+  --el-border-color-light: var(--hairline);
+  --el-border-color-lighter: var(--hairline);
+  --el-color-primary: #007aff;
+
+  --shadow-card: 0 12px 40px rgba(0, 0, 0, 0.16);
+  --shadow-float: 0 24px 70px rgba(0, 0, 0, 0.20);
+  --shadow-pop: 0 30px 90px rgba(0, 0, 0, 0.24);
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--font);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+}
+
+/* ---- Lucide icons: sizing + spin --------------------------------- */
+.lucide,
+[class^="lucide-"] {
+  width: 1em;
+  height: 1em;
+  stroke-width: 2;
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+.spin { animation: lucide-spin 0.9s linear infinite; }
+@keyframes lucide-spin { to { transform: rotate(360deg); } }
+
+
+/* ---- HiDPI / high-resolution scaling -------------------------------
+   The WebView2 renders at the system DPI, so the layout already
+   scales. These rules keep it crisp and predictable at 4K/Retina:
+   - reset any inherited zoom so 1 CSS px == 1 layout px
+   - disable text selection everywhere except real text inputs
+   ------------------------------------------------------------- */
+html { zoom: 1; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+img, svg, .cell, .folder-icon { image-rendering: -webkit-optimize-contrast; }
+
+/* Disable selection/highlight on UI chrome (buttons, nav, cards)... */
+*,
+*::before,
+*::after {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+/* ...but keep it enabled for actual text entry. */
+input,
+textarea,
+[contenteditable="true"],
+.el-input__inner,
+.search-input :deep(.el-input__inner) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* Remove the focus ring on non-text controls; text fields keep theirs. */
+button:focus,
+nav:focus,
+.sidebar:focus,
+.main:focus,
+.titlebar:focus,
+.nav-item:focus,
+.provider-chip:focus,
+.model-row:focus,
+.folder-card:focus,
+.theme-toggle:focus,
+.ghost-btn:focus,
+.primary-btn:focus,
+.field-check:focus,
+.field-affix:focus {
+  outline: none;
+}
+
+/* ---- Vibrant wallpaper (bleeds through the frosted window) ------------- */
+.app-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: #000;
+}
+html[data-theme="light"] .app-backdrop {
+  background: #000;
+}
+
+/* ---- Window shell (full-bleed; Win11 supplies rounded corners) --- */
+.app-shell {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  background: var(--win-material);
+  -webkit-backdrop-filter: blur(60px) saturate(180%);
+  backdrop-filter: blur(60px) saturate(180%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Title bar (drag region; window controls on the right) --- */
+.titlebar {
+  flex: none;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 14px;
+  background: var(--title-material);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: 1px solid var(--hairline);
+  position: relative;
+  -webkit-app-region: drag;
+  --wails-draggable: drag;
+}
+.traffic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto; /* push window controls to the right */
+  -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
+}
+.light-dot {
+  width: 16.6px; /* +15% over the 14.4px base */
+  height: 16.6px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: default;
+  position: relative;
+  display: grid;
+  place-items: center;
+  transition: transform 0.18s var(--ease);
+}
+.light-dot:hover { transform: scale(1.08); }
+.light-dot svg { width: 11px; height: 11px; opacity: 0; transition: opacity 0.15s; color: rgba(0,0,0,0.55); }
+.light-dot:hover svg { opacity: 1; }
+.light-red { background: #ff5f57; }
+.light-yellow { background: #febc2e; }
+.light-green { background: #28c840; }
+
+.titlebar-title {
+  position: absolute;
+  left: 0; right: 0;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--fg-2);
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.titlebar-title .app-glyph {
+  width: 16px; height: 16px;
+  border-radius: 5px;
+  background: linear-gradient(160deg, #6a8dff, #b06aff);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.4);
+  display: grid; place-items: center;
+}
+.titlebar-title .app-glyph svg { width: 10px; height: 10px; color: #fff; }
+
+/* ---- Body layout ------------------------------------------------------- */
+.app-body {
+  flex: 1;
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+  min-height: 0;
+}
+
+/* Floating sidebar card */
+.sidebar {
+  width: 304px;
+  flex: none;
+  border-radius: var(--radius-card);
+  background: var(--side-material);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--hairline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Main content card */
+.main {
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--radius-card);
+  background: var(--main-material);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--hairline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---- Sidebar internals ------------------------------------------------- */
+.sidebar-nav {
+  display: flex;
+  gap: 6px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.nav-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--fg-2);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease), transform 0.12s var(--ease);
+  user-select: none;
+}
+.nav-item svg { width: 15px; height: 15px; }
+.nav-item:hover { background: var(--field-bg); color: var(--fg); }
+.nav-item:active { transform: scale(0.97); }
+.nav-item.active {
+  background: var(--field-bg-focus);
+  color: var(--fg);
+  border-color: var(--hairline-strong);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 16px 8px;
+  min-height: 0;
+}
+
+.sidebar-foot {
+  flex: none;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* ---- Sidebar toggle button --------------------------------------------- */
+.sidebar-top {
+  flex: none;
+  padding: 10px 12px 0;
+}
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-field);
+  border: 1px solid var(--field-border);
+  background: var(--field-bg);
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background 0.18s var(--ease), color 0.18s var(--ease),
+    border-color 0.18s var(--ease), transform 0.12s var(--ease);
+}
+.sidebar-toggle:hover {
+  background: var(--field-bg-focus);
+  color: var(--fg);
+  border-color: var(--hairline-strong);
+}
+.sidebar-toggle:active { transform: scale(0.95); }
+
+/* ---- Sidebar collapsed state ------------------------------------------- */
+.sidebar {
+  transition: width 0.28s var(--ease);
+}
+.sidebar.collapsed {
+  width: 62px;
+}
+.sidebar.collapsed .nav-label {
+  display: none;
+}
+.sidebar.collapsed .sidebar-scroll,
+.sidebar.collapsed .sidebar-foot {
+  display: none;
+}
+.sidebar.collapsed .sidebar-nav {
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 8px;
+  gap: 4px;
+}
+.sidebar.collapsed .nav-item {
+  flex: none;
+  justify-content: center;
+  padding: 10px;
+  width: 42px;
+  height: 42px;
+}
+.sidebar.collapsed .sidebar-top {
+  padding: 10px 8px 0;
+}
+.sidebar.collapsed .sidebar-toggle {
+  width: 42px;
+  height: 32px;
+  margin: 0 auto;
+}
+
+/* ---- Theme toggle (round, icon-only) --------------------------------- */
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin: 0 auto;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--field-border);
+  background: var(--field-bg);
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background 0.18s var(--ease), color 0.18s var(--ease),
+    border-color 0.18s var(--ease), transform 0.12s var(--ease);
+}
+.theme-toggle:hover {
+  background: var(--field-bg-focus);
+  color: var(--fg);
+  border-color: var(--hairline-strong);
+}
+.theme-toggle:active { transform: scale(0.94); }
+.theme-toggle svg {
+  width: 17px;
+  height: 17px;
+}
+.theme-spin-enter-active,
+.theme-spin-leave-active {
+  transition: transform 0.22s var(--ease-spring), opacity 0.18s var(--ease);
+}
+.theme-spin-enter-from { transform: rotate(-90deg) scale(0.4); opacity: 0; }
+.theme-spin-leave-to { transform: rotate(90deg) scale(0.4); opacity: 0; }
+
+/* Section heading */
+.section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+  margin: 18px 2px 10px;
+}
+.section-title:first-child { margin-top: 2px; }
+
+/* ---- Main internals ---------------------------------------------------- */
+.main-search {
+  flex: none;
+  padding: 16px 18px 12px;
+}
+.main-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 18px 20px;
+  min-height: 0;
+}
+
+/* ---- Scrollbars (macOS thin) ------------------------------------------ */
+.sidebar-scroll::-webkit-scrollbar,
+.main-scroll::-webkit-scrollbar,
+.grid-scroller::-webkit-scrollbar { width: 8px; height: 8px; }
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.main-scroll::-webkit-scrollbar-thumb,
+.grid-scroller::-webkit-scrollbar-thumb {
+  background: var(--hairline-strong);
+  border-radius: 999px;
+}
+.sidebar-scroll::-webkit-scrollbar-track,
+.main-scroll::-webkit-scrollbar-track,
+.grid-scroller::-webkit-scrollbar-track { background: transparent; }
+
+/* =========================================================================
+   Element Plus overrides (keep functional primitives, restyle to match)
+   ========================================================================= */
+.el-message {
+  background: var(--pop-material) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid var(--hairline-strong) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--shadow-pop) !important;
+  color: var(--fg) !important;
+}
+.el-message .el-message__content { color: var(--fg) !important; }
+.el-message--success .el-message__icon { color: var(--green) !important; }
+.el-message--error .el-message__icon { color: var(--red) !important; }
+.el-message--warning .el-message__icon { color: var(--orange) !important; }
+
+/* Preview dialog → frosted sheet */
+.el-dialog.preview-dialog {
+  background: var(--pop-material) !important;
+  -webkit-backdrop-filter: blur(50px) saturate(180%);
+  backdrop-filter: blur(50px) saturate(180%);
+  border: none !important;
+  border-radius: 18px !important;
+  box-shadow: var(--shadow-pop) !important;
+  overflow: hidden;
+}
+.el-dialog.preview-dialog .el-dialog__header { display: none; }
+.el-dialog.preview-dialog .el-dialog__body { padding: 12px; }
+
+/* Empty state */
+.el-empty { padding: 48px 0; }
+.el-empty__description { color: var(--fg-3) !important; font-size: 0.85rem; }
+
+/* Alerts → frosted callouts */
+.el-alert {
+  background: var(--card-material) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 12px !important;
+  color: var(--fg-2) !important;
+}
+.el-alert .el-alert__title { color: var(--fg) !important; font-weight: 600; }
+.el-alert .el-alert__content { color: var(--fg-2) !important; }
+.el-alert--info.is-light { color: var(--fg-2) !important; }
+
+/* Progress (scan) → floating glass chip */
+.scan-chip {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--pop-material);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--shadow-pop);
+}
+.scan-chip .scan-text { font-size: 0.8rem; color: var(--fg-2); }
+.el-progress--circle { width: auto !important; }
+/* Percentage inside the scan ring: as large as the inner ring allows,
+   centered on the % sign. */
+.scan-chip .el-progress__text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  font-size: 15px !important;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--fg);
+  letter-spacing: -0.02em;
+}
+.scan-chip .el-progress { position: relative; }
+
+/* ---- Shared buttons (used in SettingsView, LogsView, …) --------------- */
+.ghost-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--field-border);
+  background: var(--field-bg);
+  color: var(--fg-2);
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  flex: none;
+  transition: all 0.15s var(--ease);
+}
+.ghost-btn:hover { background: var(--field-bg-focus); color: var(--fg); }
+.ghost-btn.danger { color: var(--red); }
+.ghost-btn.danger:hover { color: var(--red); border-color: rgba(255, 69, 58, 0.5); background: rgba(255, 69, 58, 0.10); }
+.ghost-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+.ghost-btn.active {
+  background: var(--field-bg-focus);
+  color: var(--accent);
+  border-color: var(--field-border-focus);
+  box-shadow: inset 0 0 0 1px var(--field-border-focus), 0 0 0 2px rgba(10, 132, 255, 0.25);
+}
+.ghost-btn.active:hover { color: var(--accent); }
+
+/* ---- Search autocomplete (past searches) popper ------------------------- */
+.el-autocomplete__popper.el-popper {
+  background: var(--card-material) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-pop) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+}
+.el-autocomplete__popper .el-autocomplete-suggestion {
+  background: transparent;
+  color: var(--fg);
+}
+.el-autocomplete__popper .el-autocomplete-suggestion li {
+  color: var(--fg);
+  font-size: 0.88rem;
+}
+.el-autocomplete__popper .el-autocomplete-suggestion li:hover,
+.el-autocomplete__popper .el-autocomplete-suggestion li.highlighted {
+  background: var(--field-bg-focus);
+  color: var(--fg);
+}
+
+/* ---- Logs dialog --------------------------------------------------------- */
+/* Use a near-opaque dark surface so the vibrant app-backdrop does NOT bleed
+   through (which otherwise gives the log area a brownish tint). The main
+   window stays frosted; only the dialog is made solid-dark. */
+.logs-dialog.el-dialog {
+  background: rgba(18, 18, 22, 0.95);
+  color: var(--fg);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+html[data-theme="light"] .logs-dialog.el-dialog {
+  background: rgba(248, 248, 250, 0.97);
+}
+.logs-dialog .el-dialog__header {
+  padding: 14px 18px;
+  margin-right: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+}
+.logs-dialog .el-dialog__title {
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.logs-dialog .el-dialog__headerbtn { top: 14px; }
+.logs-dialog .el-dialog__headerbtn .el-dialog__close { color: var(--fg-3); }
+.logs-dialog .el-dialog__headerbtn:hover .el-dialog__close { color: var(--fg); }
+.logs-dialog .el-dialog__body {
+  padding: 0;
+  height: 64vh;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+.logs-dialog .el-dialog__body > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+}
+
+/* ---- Prompt dialog (opened from the preview dialog) ------------------- */
+/* Sized independently of the image dialog (fixed width, capped body
+   height with its own scroll) so it always fits on screen no matter the
+   image's aspect ratio — portrait, square, or wide/landscape. */
+.prompt-dialog.el-dialog {
+  width: min(560px, 92vw) !important;
+  background: rgba(18, 18, 22, 0.95);
+  color: var(--fg);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+html[data-theme="light"] .prompt-dialog.el-dialog {
+  background: rgba(248, 248, 250, 0.97);
+}
+.prompt-dialog .el-dialog__header {
+  padding: 14px 18px;
+  margin-right: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+}
+.prompt-dialog .el-dialog__title {
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.prompt-dialog .el-dialog__headerbtn { top: 14px; }
+.prompt-dialog .el-dialog__headerbtn .el-dialog__close { color: var(--fg-3); }
+.prompt-dialog .el-dialog__headerbtn:hover .el-dialog__close { color: var(--fg); }
+.prompt-dialog .el-dialog__body {
+  padding: 16px 18px 18px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.prompt-dialog .el-dialog__body::-webkit-scrollbar { width: 8px; height: 8px; }
+.prompt-dialog .el-dialog__body::-webkit-scrollbar-thumb {
+  background: var(--hairline-strong);
+  border-radius: 999px;
+}
+.prompt-dialog .el-dialog__body::-webkit-scrollbar-track { background: transparent; }

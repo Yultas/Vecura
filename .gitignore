@@ -1,0 +1,33 @@
+# Everything Wails generates under build/ is disposable, including the
+# NSIS installer script it creates on `wails build` runs.
+build/
+dist/
+*.db
+*.db-wal
+*.db-shm
+node_modules/
+frontend/dist/
+frontend/package.json.md5
+
+# Local secrets (never commit)
+.env
+.env.local
+
+# OS / editor junk
+nul
+*.exe
+*.dll
+*.so
+*.dylib
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Local agent / bridge state (never commit)
+.threadbridge/
+
+Vecura.7z
