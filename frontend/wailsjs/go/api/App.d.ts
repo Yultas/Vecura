@@ -25,6 +25,8 @@ export function GetLLamaStatus():Promise<api.LLamaStatus>;
 
 export function GetModelInfo(arg1:string):Promise<api.ModelInfo>;
 
+export function ImageDataURI(arg1:string):Promise<string>;
+
 export function ListModels():Promise<Array<api.ModelInfo>>;
 
 export function ListRemoteModels(arg1:string,arg2:string):Promise<Array<api.RemoteModel>>;

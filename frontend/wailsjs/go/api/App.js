@@ -46,6 +46,10 @@ export function GetModelInfo(arg1) {
   return window['go']['api']['App']['GetModelInfo'](arg1);
 }
 
+export function ImageDataURI(arg1) {
+  return window['go']['api']['App']['ImageDataURI'](arg1);
+}
+
 export function ListModels() {
   return window['go']['api']['App']['ListModels']();
 }
